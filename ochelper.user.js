@@ -2,7 +2,7 @@
 // @name        [TORN] OC 2.0 Helper (Modified with Dynamic Limits)
 // @namespace    https://github.com/Nexistech/Torn_Scripts
 // @match       https://www.torn.com/*
-// @version     1.2
+// @version     1.3
 // @author      callmericky [3299880] / whatdoesthespacebardo - Edited by Coshtor
 // @description  OC 2.0 overview with per-level success limits and a newbie exclusion period. Fork of callmericky's helper.
 // @require     http://code.jquery.com/jquery-3.6.0.min.js
@@ -1927,7 +1927,15 @@ function overviewTableNeedsFill() {
   if (!$(".OC2-memberViewer .OC2-memberTable")[0]) {
     return true
   }
-  return ($(".OC2-memberTable li.OC2-memberAvailable, .OC2-memberTable li.OC2-crimeLi").not("[class*='OC2-titleLi']").length < 1)
+  // Title rows and horizontal rules live in the empty shell and are not data.
+  if ($(".OC2-memberTable li.OC2-memberAvailable").length > 0) {
+    return false
+  }
+  if ($(".OC2-memberTable li.OC2-crimeMemberLi").length > 0) {
+    return false
+  }
+  const dataCrimeRows = $(".OC2-memberTable li.OC2-crimeLi").not("[class*='OC2-titleLi']").not(".OC2-horizLine")
+  return dataCrimeRows.length < 1
 }
 
 async function populateOverviewFromAPI() {
