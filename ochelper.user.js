@@ -2,7 +2,7 @@
 // @name        [TORN] OC 2.0 Helper (Modified with Dynamic Limits)
 // @namespace    https://github.com/Nexistech/Torn_Scripts
 // @match       https://www.torn.com/*
-// @version     1.1
+// @version     1.2
 // @author      callmericky [3299880] / whatdoesthespacebardo - Edited by Coshtor
 // @description  OC 2.0 overview with per-level success limits and a newbie exclusion period. Fork of callmericky's helper.
 // @require     http://code.jquery.com/jquery-3.6.0.min.js
@@ -1293,7 +1293,10 @@ async function generateInsertHTML() {
     "display": "none"
   })
   if (checkCrimesPage()) {
-    $("div#faction-crimes").before(_insertHTML)
+    const crimesRoot = await waitForElm("div#faction-crimes")
+    if (!$(".OC2-memberViewer .OC2-memberTable")[0]) {
+      $(crimesRoot).before(_insertHTML)
+    }
     checkDefaultSortState()
     styleTable()
     $(".hideCrimesButton").off().on("click", event => {
@@ -1919,27 +1922,44 @@ function styleOCNotifier() {
  *  -> otherwise, show the table
  * -> otherwise, hide the table
  */
+
+function overviewTableNeedsFill() {
+  if (!$(".OC2-memberViewer .OC2-memberTable")[0]) {
+    return true
+  }
+  return ($(".OC2-memberTable li.OC2-memberAvailable, .OC2-memberTable li.OC2-crimeLi").not("[class*='OC2-titleLi']").length < 1)
+}
+
+async function populateOverviewFromAPI() {
+  if (!myAPIData) {
+    try {
+      let _successfulGetAPIData = await getAndAnalyzeAPIData()
+      if (_successfulGetAPIData.error) {
+        $(".OC2-memberTable").hide()
+        $(".OC2-memberTableErrorDisplay").html(`<span style="margin-left: 20px">Error occured: ${_successfulGetAPIData.error.error}. Please visit the <a href="https://www.torn.com/preferences.php#OC2-Settings" target="_new" style="color: inherit; font-weight: bold; text-decoration: underline">Settings Page</a> to set up an API key</span>`)
+        $(".OC2-memberTableErrorDisplay").show()
+        return _successfulGetAPIData
+      }
+    } catch (_err) {
+      return _err
+    }
+  }
+  if (overviewTableNeedsFill()) {
+    putMemberInfoIntoTable()
+  } else {
+    $(".OC2-memberViewer").show()
+    $(".OC2-memberTable").show()
+  }
+}
+
+async function ensureCrimesOverview() {
+  await generateInsertHTML()
+  await populateOverviewFromAPI()
+}
+
 async function hashChangeFunction() {
   if (checkCrimesPage()) {
-    if (!$(".OC2-memberViewer .OC2-memberTable")[0]) {
-      generateInsertHTML();
-      if (!myAPIData) {
-        try {
-          let _successfulGetAPIData = await getAndAnalyzeAPIData()
-          if (_successfulGetAPIData.error) {
-            $(".OC2-memberTable").hide()
-            $(".OC2-memberTableErrorDisplay").html(`<span style="margin-left: 20px">Error occured: ${_successfulGetAPIData.error.error}. Please visit the <a href="https://www.torn.com/OC2_Settings_Page" target="_new" style="color: inherit; font-weight: bold; text-decoration: underline">Settings Page</a> to set up an API key</span>`)
-            $(".OC2-memberTableErrorDisplay").show()
-          } else {
-            putMemberInfoIntoTable()
-          }
-        } catch(_err) {
-          return _err
-        }
-      }
-    } else {
-        $(".OC2-memberViewer").show()
-    }
+    await ensureCrimesOverview()
   } else {
     if ($(".OC2-memberViewer .OC2-memberTable")[0]) {
       $(".OC2-memberViewer").hide();
@@ -1973,25 +1993,7 @@ async function runOnceFunction() {
   }
   //insert member overview
   if (checkCrimesPage() || await checkTravelFactionPage()) {
-    if (!$(".OC2-memberViewer .OC2-memberTable")[0]) {
-      generateInsertHTML()
-      if (!myAPIData) {
-        try {
-          let _successfulGetAPIData = await getAndAnalyzeAPIData()
-          if (_successfulGetAPIData.error) {
-            $(".OC2-memberTable").hide()
-            $(".OC2-memberTableErrorDisplay").html(`<span style="margin-left: 20px">Error occured: ${_successfulGetAPIData.error.error}. Please visit the <a href="https://www.torn.com/OC2_Settings_Page" target="_new" style="color: inherit; font-weight: bold; text-decoration: underline">Settings Page</a> to set up an API key</span>`)
-            $(".OC2-memberTableErrorDisplay").show()
-          } else {
-            putMemberInfoIntoTable()
-          }
-        } catch(_err) {
-          return _err
-        }
-      }
-    } else {
-      $(".OC2-memberViewer").show()
-    }
+    await ensureCrimesOverview()
   }
   //sidebar notifier, but not if the sidebar doesn't exist
   if (userSettings.showSidebarOC == "sidebar-show") {
@@ -2066,6 +2068,11 @@ _isWindowTiny.addEventListener("change", function() {
 checkWindowWidth()
 runOnceFunction()
 $(window).on('hashchange', hashChangeFunction)
+$(window).on('popstate', hashChangeFunction)
+$(document).on('click', 'a[href*="tab=crimes"], a[href*="#/tab=crimes"]', function() {
+  setTimeout(hashChangeFunction, 50)
+  setTimeout(hashChangeFunction, 400)
+})
 
 $("#dark-mode-state").on('change', modeChangeFunction)
 
