@@ -95,8 +95,8 @@ const defaultUserSettings = {
   "warnLowSuccess": "warn-success-show",
   "warnLowSuccessPercentage": 50,
   "warnLowSuccessByLevel": {
-    "1": 50, "2": 50, "3": 50, "4": 50, "5": 50,
-    "6": 50, "7": 50, "8": 50, "9": 50, "10": 50
+    "1": 1, "2": 70, "3": 70, "4": 70, "5": 70,
+    "6": 60, "7": 60, "8": 60, "9": 60, "10": 60
   },
   "showProgressPercentage": "progress-show",
   "showSelfSuccessRate": "self-success-show",
