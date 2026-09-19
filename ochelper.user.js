@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        [TORN] OC 2.0 Helper (Modified with Dynamic Limits)
-// @namespace   Violentmonkey Scripts
+// @namespace    https://github.com/Nexistech/Torn_Scripts
 // @match       https://www.torn.com/*
 // @version     1.1
 // @author      callmericky [3299880] / whatdoesthespacebardo - Edited by Coshtor
@@ -14,8 +14,8 @@
 // @grant       GM.xmlHttpRequest
 // @grant       GM.xmlhttpRequest
 // @license     GNU GPLv3
-// @downloadURL https://gist.github.com/Nexistech/95ccc535b0fbaff29847875a240eceda/raw/1648053d8e4b9fda4b3d7384649a6e63db5c0591/ochelper.user.js
-// @updateURL https://gist.github.com/Nexistech/95ccc535b0fbaff29847875a240eceda/raw/1648053d8e4b9fda4b3d7384649a6e63db5c0591/ochelper.user.js
+// @downloadURL  https://raw.githubusercontent.com/Nexistech/Torn_Scripts/main/ochelper.user.js
+// @updateURL    https://raw.githubusercontent.com/Nexistech/Torn_Scripts/main/ochelper.user.js
 // ==/UserScript==
 
 //IF DROPDOWN MENU DOESN'T WORK, MANUALLY ADD YOUR API KEY HERE
