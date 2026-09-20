@@ -2,7 +2,7 @@
 // @name        [TORN] OC 2.0 Helper (Modified with Dynamic Limits)
 // @namespace    https://github.com/Nexistech/Torn_Scripts
 // @match       https://www.torn.com/*
-// @version     1.3
+// @version     1.11
 // @author      callmericky [3299880] / whatdoesthespacebardo - Edited by Coshtor
 // @description  OC 2.0 overview with per-level success limits and a newbie exclusion period. Fork of callmericky's helper.
 // @require     http://code.jquery.com/jquery-3.6.0.min.js
@@ -85,9 +85,9 @@ const defaultUserSettings = {
   "crimesShow": "crimes-hide",
   "sortType": "time-asc", //time-asc / time-desc / level-asc / level-desc
   "memberSort": "OC-desc", //OC-asc / OC-desc / active-asc / active-desc
-  "lastOC_yellow": 24,
-  "lastOC_red": 48,
-  "lastActivity": 96,
+  "lastOC_yellow": 48,
+  "lastOC_red": 96,
+  "lastActivity": 168,
   "memberIgnoreList": [],
   "showSidebarOC": "sidebar-show",
   "showNegativeTimes": "negative-timer-hide",
@@ -325,6 +325,427 @@ function pruneMemberRosterCache(currentMemberIds, nowTs) {
   }
 }
 
+
+const ARMORY_LOAN_STORAGE_KEY = "CMR_OC2_pendingArmoryLoan"
+const ARMORY_SUB_BY_TYPE = {
+  "drug": "drugs",
+  "drugs": "drugs",
+  "armor": "armour",
+  "armour": "armour",
+  "defensive": "armour",
+  "weapon": "weapons",
+  "primary": "weapons",
+  "secondary": "weapons",
+  "melee": "weapons",
+  "temporary": "temporary",
+  "medical": "medical",
+  "booster": "boosters",
+  "energy drink": "consumables",
+  "candy": "consumables",
+  "alcohol": "consumables",
+  "tool": "utilities",
+  "material": "utilities",
+  "enhancer": "utilities",
+  "other": "utilities"
+}
+const ARMORY_SUB_BY_ITEM_ID = {
+  "643": "armour" // Construction Helmet
+}
+const ARMORY_SUB_BY_NAME = {
+  "construction helmet": "armour",
+  "pcp": "drugs"
+}
+
+function getArmorySubTabForItem(itemId) {
+  const cached = itemIDObj[itemId] || itemIDObj[String(itemId)] || {}
+  const byId = ARMORY_SUB_BY_ITEM_ID[String(itemId)]
+  if (byId) {
+    return byId
+  }
+  const byName = ARMORY_SUB_BY_NAME[String(cached.name || "").toLowerCase()]
+  if (byName) {
+    return byName
+  }
+  const byType = ARMORY_SUB_BY_TYPE[String(cached.type || "").toLowerCase()]
+  return byType || "utilities"
+}
+
+function getArmoryLoanUrl(itemId) {
+  const sub = getArmorySubTabForItem(itemId)
+  return `https://www.torn.com/factions.php?step=your#/tab=armoury&start=0&sub=${encodeURIComponent(sub)}`
+}
+
+function bindArmoryLoanLinks() {
+  $(".OC2-armoryLoanLink").css({
+    "cursor": "pointer",
+    "text-decoration": "underline"
+  })
+  $(document).off("click.oc2loan", ".OC2-armoryLoanLink").on("click.oc2loan", ".OC2-armoryLoanLink", function(event) {
+    event.preventDefault()
+    event.stopPropagation()
+    const itemId = $(this).attr("data-itemid")
+    const memberId = $(this).attr("data-memberid")
+    const memberName = $(this).attr("data-membername")
+    if (!itemId) {
+      return
+    }
+    const payload = {
+      itemId: String(itemId),
+      memberId: String(memberId || ""),
+      memberName: memberName || "",
+      itemName: (itemIDObj[itemId] && itemIDObj[itemId].name) || "",
+      createdAt: Date.now()
+    }
+    try {
+      sessionStorage.setItem(ARMORY_LOAN_STORAGE_KEY, JSON.stringify(payload))
+    } catch (err) {
+      console.log("OC 2.0 Overview Script: unable to store pending armory loan", err)
+    }
+    const nextUrl = getArmoryLoanUrl(itemId)
+    const nextHash = nextUrl.split("#")[1] || "/tab=armoury&start=0&sub=utilities"
+    if (window.location.pathname.indexOf("factions.php") >= 0) {
+      if (window.location.hash === "#" + nextHash) {
+        maybeStartArmoryLoanHelper()
+      } else {
+        window.location.hash = nextHash
+      }
+    } else {
+      window.location.href = nextUrl
+    }
+  })
+}
+
+function setNativeInputValue(elm, value) {
+  if (!elm) {
+    return
+  }
+  const proto = elm.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+  const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set
+  if (setter) {
+    setter.call(elm, value)
+  } else {
+    elm.value = value
+  }
+  elm.dispatchEvent(new Event("input", { bubbles: true }))
+  elm.dispatchEvent(new Event("change", { bubbles: true }))
+  elm.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Unidentified" }))
+}
+
+function isArmorySearchInput(el) {
+  if (!el) {
+    return true
+  }
+  if (el.closest(".loan-cont, .give-cont, .member-wrap, .member-cont")) {
+    return false
+  }
+  const blob = [
+    el.placeholder,
+    el.name,
+    el.id,
+    el.className,
+    el.getAttribute("aria-label"),
+    el.getAttribute("title")
+  ].join(" ").toLowerCase()
+  if (blob.includes("search") || blob.includes("filter") || blob.includes("find item") || blob.includes("quick find")) {
+    return true
+  }
+  if (el.closest(".armoury-search, .armory-search, .search-wrap, .input-search, .tt-armory-filter, header, .list-title")) {
+    return true
+  }
+  return false
+}
+
+function rowLooksAvailable(row) {
+  const text = (row.textContent || "").toLowerCase()
+  if (text.includes("available")) {
+    return true
+  }
+  return !row.querySelector(".loaned a")
+}
+
+function getArmoryListRoot() {
+  return document.querySelector("#faction-armoury-tabs ul.item-list, #faction-armoury ul.item-list, .armoury-wrap ul.item-list, ul.item-list")
+}
+
+function findArmoryItemRow(itemId, itemName) {
+  const root = getArmoryListRoot()
+  if (!root) {
+    return null
+  }
+  const idStr = String(itemId)
+  const rows = []
+  root.querySelectorAll(`li [data-itemid="${idStr}"], li [data-item-id="${idStr}"]`).forEach(node => {
+    const li = node.closest("li")
+    if (li) {
+      rows.push(li)
+    }
+  })
+  if (!rows.length && itemName) {
+    const needle = itemName.toLowerCase()
+    root.querySelectorAll("li .name, li .item-name").forEach(node => {
+      const label = (node.textContent || "").trim().toLowerCase()
+      if (label === needle || label.startsWith(needle + " ") || label.startsWith(needle + " x")) {
+        const li = node.closest("li")
+        if (li) {
+          rows.push(li)
+        }
+      }
+    })
+  }
+  if (!rows.length) {
+    return null
+  }
+  return rows.find(rowLooksAvailable) || rows[0]
+}
+
+function ensureArmoryHighlightStyles() {
+  if (document.getElementById("OC2-armoryHighlightStyles")) {
+    return
+  }
+  const style = document.createElement("style")
+  style.id = "OC2-armoryHighlightStyles"
+  style.textContent = `
+    @keyframes OC2-armoryGlow {
+      0% { box-shadow: 0 0 4px 1px rgba(46, 204, 113, 0.35), 0 0 0 1px rgba(46, 204, 113, 0.5); }
+      50% { box-shadow: 0 0 16px 4px rgba(46, 204, 113, 0.85), 0 0 0 2px rgba(46, 204, 113, 1); }
+      100% { box-shadow: 0 0 4px 1px rgba(46, 204, 113, 0.35), 0 0 0 1px rgba(46, 204, 113, 0.5); }
+    }
+    .OC2-armoryTargetRow {
+      outline: 2px solid #2ecc71 !important;
+      outline-offset: -2px;
+      animation: OC2-armoryGlow 1.4s ease-in-out infinite;
+      background-color: rgba(46, 204, 113, 0.12) !important;
+    }
+    .OC2-armoryTargetLoan {
+      outline: 2px solid #2ecc71 !important;
+      outline-offset: 3px;
+      border-radius: 3px;
+      animation: OC2-armoryGlow 1.4s ease-in-out infinite;
+      background-color: rgba(46, 204, 113, 0.18) !important;
+    }
+    .OC2-armoryTargetRow.item-loan-act > form .loan-cont,
+    .OC2-armoryTargetRow .loan-cont.OC2-armoryLoanFormVisible {
+      display: block !important;
+    }
+    .OC2-armoryTargetRow.item-loan-act > form .give-cont {
+      display: none !important;
+    }
+  `
+  document.head.appendChild(style)
+}
+
+function getLoanControlInRow(row) {
+  if (!row) {
+    return null
+  }
+  const links = row.querySelectorAll("a, button")
+  for (const el of links) {
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase()
+    if (text === "loan") {
+      return el
+    }
+  }
+  return null
+}
+
+function revealArmoryLoanForm(row) {
+  if (!row) {
+    return null
+  }
+  row.classList.remove("item-give-act")
+  row.classList.add("item-loan-act")
+  const loanCont = row.querySelector(".loan-cont")
+  if (loanCont) {
+    loanCont.classList.add("OC2-armoryLoanFormVisible")
+    loanCont.style.display = "block"
+  }
+  const giveCont = row.querySelector(".give-cont")
+  if (giveCont) {
+    giveCont.style.display = "none"
+  }
+  return loanCont
+}
+
+function formatArmoryMemberValue(memberName, memberId) {
+  const name = String(memberName || "").trim()
+  const id = String(memberId || "").trim()
+  if (name && id) {
+    return `${name} [${id}]`
+  }
+  return name
+}
+
+function highlightArmoryLoanTarget(row) {
+  revealArmoryLoanForm(row)
+  row.scrollIntoView({ block: "center", behavior: "smooth" })
+  return getLoanControlInRow(row)
+}
+
+function isArmoryQtyInput(el) {
+  if (!el) {
+    return true
+  }
+  if ((el.type || "").toLowerCase() === "number") {
+    return true
+  }
+  const blob = [
+    el.placeholder,
+    el.name,
+    el.id,
+    el.className,
+    el.getAttribute("aria-label"),
+    el.getAttribute("title")
+  ].join(" ").toLowerCase()
+  if (blob.includes("qty") || blob.includes("quantity") || blob.includes("amount") || blob.includes("number")) {
+    return true
+  }
+  if (el.min !== "" || el.max !== "" || el.step !== "") {
+    return true
+  }
+  return false
+}
+
+function fillArmoryMemberField(memberName, preferredRoot) {
+  const scopes = [preferredRoot, document].filter(Boolean)
+  for (const scope of scopes) {
+    const loanUser = scope.querySelector(".loan-cont input[name='user'], .loan-cont input.ac-search")
+    if (loanUser && loanUser.offsetParent !== null) {
+      loanUser.focus()
+      setNativeInputValue(loanUser, memberName)
+      loanUser.blur()
+      loanUser.dispatchEvent(new Event("blur", { bubbles: true }))
+      return true
+    }
+  }
+  const roots = [preferredRoot, document].filter(Boolean)
+  const seen = new Set()
+  for (const root of roots) {
+    const inputs = Array.from(root.querySelectorAll("input"))
+      .filter(el => {
+        const type = (el.type || "text").toLowerCase()
+        return ["text", "search", ""].includes(type)
+      })
+      .filter(el => el.offsetParent !== null && !seen.has(el) && !isArmorySearchInput(el) && !isArmoryQtyInput(el) && !el.classList.contains("quantity"))
+    inputs.forEach(el => seen.add(el))
+    if (!inputs.length) {
+      continue
+    }
+    const scored = inputs.map(el => {
+      const blob = [el.placeholder, el.name, el.id, el.className].join(" ").toLowerCase()
+      let score = 0
+      if (el.name === "user") score += 8
+      if (el.closest(".loan-cont")) score += 6
+      if (el.closest(".member-wrap, .member-cont")) score += 4
+      if (blob.includes("player") || blob.includes("member") || blob.includes("user")) score += 3
+      if (blob.includes("quantity") || el.classList.contains("quantity")) score -= 20
+      return { el, score }
+    }).sort((a, b) => b.score - a.score)
+    if (scored[0].score <= 0) {
+      continue
+    }
+    scored[0].el.focus()
+    setNativeInputValue(scored[0].el, memberName)
+    return true
+  }
+  return false
+}
+
+function bindUserLoanClick(row, pending) {
+  const loanControl = getLoanControlInRow(row)
+  if (!loanControl || loanControl.dataset.oc2LoanBound === "1") {
+    return
+  }
+  loanControl.dataset.oc2LoanBound = "1"
+  loanControl.addEventListener("click", function() {
+    const start = Date.now()
+    const tick = function() {
+      if (fillArmoryMemberField(formatArmoryMemberValue(pending.memberName, pending.memberId), row)) {
+        try {
+          sessionStorage.removeItem(ARMORY_LOAN_STORAGE_KEY)
+        } catch (err) {}
+        return
+      }
+      if (Date.now() - start < 8000) {
+        setTimeout(tick, 250)
+      }
+    }
+    setTimeout(tick, 200)
+  }, { once: false })
+}
+
+async function completePendingArmoryLoan() {
+  let raw = null
+  try {
+    raw = sessionStorage.getItem(ARMORY_LOAN_STORAGE_KEY)
+  } catch (err) {
+    return
+  }
+  if (!raw) {
+    return
+  }
+  let pending = null
+  try {
+    pending = JSON.parse(raw)
+  } catch (err) {
+    sessionStorage.removeItem(ARMORY_LOAN_STORAGE_KEY)
+    return
+  }
+  if (!pending || !pending.itemId) {
+    return
+  }
+  if (pending.createdAt && (Date.now() - pending.createdAt) > 5 * 60 * 1000) {
+    sessionStorage.removeItem(ARMORY_LOAN_STORAGE_KEY)
+    return
+  }
+  const href = String(window.location.href)
+  if (href.search("tab=armoury") < 0 && href.search("tab=armory") < 0) {
+    return
+  }
+  const deadline = Date.now() + 15000
+  while (Date.now() < deadline) {
+    const targetRow = findArmoryItemRow(pending.itemId, pending.itemName)
+    if (targetRow) {
+      highlightArmoryLoanTarget(targetRow)
+      bindUserLoanClick(targetRow, pending)
+      fillArmoryMemberField(formatArmoryMemberValue(pending.memberName, pending.memberId), targetRow)
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 400))
+  }
+}
+
+function clearArmoryLoanHighlights() {
+  document.querySelectorAll(".OC2-armoryTargetRow").forEach(el => el.classList.remove("OC2-armoryTargetRow"))
+  document.querySelectorAll(".OC2-armoryTargetLoan").forEach(el => el.classList.remove("OC2-armoryTargetLoan"))
+}
+
+function maybeStartArmoryLoanHelper() {
+  const href = String(window.location.href)
+  if (href.search("tab=armoury") < 0 && href.search("tab=armory") < 0) {
+    clearArmoryLoanHighlights()
+    return
+  }
+  let raw = null
+  try {
+    raw = sessionStorage.getItem(ARMORY_LOAN_STORAGE_KEY)
+  } catch (err) {}
+  if (raw) {
+    try {
+      const pending = JSON.parse(raw)
+      const wantedSub = getArmorySubTabForItem(pending.itemId)
+      if (wantedSub && href.search("sub=" + wantedSub) < 0) {
+        const tab = document.querySelector(`#faction-armoury-tabs a[href*="sub=${wantedSub}"], #faction-armoury-tabs li[aria-controls*="sub=${wantedSub}"]`)
+        if (tab) {
+          tab.click()
+        } else {
+          window.location.hash = `/tab=armoury&start=0&sub=${wantedSub}`
+        }
+      }
+    } catch (err) {}
+  }
+  completePendingArmoryLoan()
+}
+
 async function getAPIKey() {
   if (isPDA()) {
     APIKey = PDA_APIKey
@@ -506,6 +927,7 @@ async function convertItemIDArrayToItems() {
       .then( (_data) => {
       for (var _itemID of Object.keys(_data.items)) {
         itemIDObj[_itemID].name = _data.items[_itemID].name
+        itemIDObj[_itemID].type = _data.items[_itemID].type || ""
       }
     })
   }
@@ -1052,6 +1474,7 @@ function putMemberInfoIntoTable() {
   })
 
   convertItemIDArrayToItems()
+  bindArmoryLoanLinks()
   styleTable()
   arrangeMemberDirectionality()
   calculateCrimeSlots()
@@ -1116,6 +1539,7 @@ async function putCrimeInfoIntoTable(_crimeArray, _afterElm) {
       let _warningItemNeeded = ""
       let _crimeSlotPositionArray = []
       let _crimeSuccessRateList = []
+      let _firstMissingLoan = null
       //count number of slots filled
       for (let j = 0; j < (_crimeArray[i].slots).length; j++) {
         let _crimeSlotMemberName = `<span class="OC2-textGray">&nbsp;&nbsp;&nbsp;&nbsp;N/A</span>`
@@ -1189,6 +1613,13 @@ async function putCrimeInfoIntoTable(_crimeArray, _afterElm) {
               _warningItemNeeded += "<br />"
             }
             _warningItemNeeded += `&nbsp;<#${_crimeArray[i].slots[j].item_requirement.id}> - ${memberInfo[_crimeArray[i].slots[j].user.id].name}`
+            if (!_firstMissingLoan) {
+              _firstMissingLoan = {
+                itemId: _crimeArray[i].slots[j].item_requirement.id,
+                memberId: _crimeArray[i].slots[j].user.id,
+                memberName: memberInfo[_crimeArray[i].slots[j].user.id].name
+              }
+            }
           }
         } else {
           if (alreadyCountedCrimeSlots == false) {
@@ -1219,9 +1650,15 @@ async function putCrimeInfoIntoTable(_crimeArray, _afterElm) {
       if (_crimeWarningIcon.length > 0) {
         _crimeWarningIcon = "[" + _crimeWarningIcon + "]&nbsp;"
       }
+      let _warningAttrs = ""
+      let _warningClickHint = ""
+      if (_firstMissingLoan) {
+        _warningAttrs = ` data-itemid="${_firstMissingLoan.itemId}" data-memberid="${_firstMissingLoan.memberId}" data-membername="${String(_firstMissingLoan.memberName).replace(/"/g, '&quot;')}"`
+        _warningClickHint = "<br /><br />Click the tool icon to open the armory at this item. Then click Loan yourself; the member name will be filled in."
+      }
       let _outputHTML = (`<li class="table-cell OC2-crimeLi ${_crimeListType} OC2-crimeID_${_crimeArray[i].id} ${_userIndicatorCrimeClass}">
         <div class="OC2-tableCell OC2-tableCrimeMemberCount OC2-crimeID_${_crimeArray[i].id}"><span class="hideMembersButton">${membersButtonShowText}</span>&nbsp;&nbsp;${_memberCount} / ${(_crimeArray[i].slots).length}</div>
-        <div class="OC2-tableCell OC2-tableCrime"><span class="OC2-crimeMouseoverWarning" title="${_crimeWarningMouseover}">${_crimeWarningIcon}</span><a href="https://www.torn.com/factions.php?step=your&type=12#/tab=crimes&crimeId=${_crimeArray[i].id}">Lv${_crimeArray[i].difficulty} ${_crimeArray[i].name}</a></div>
+        <div class="OC2-tableCell OC2-tableCrime">${_firstMissingLoan ? `<a class="OC2-crimeMouseoverWarning OC2-armoryLoanLink" href="${getArmoryLoanUrl(_firstMissingLoan.itemId)}" title="${_crimeWarningMouseover}${_warningClickHint}"${_warningAttrs}>${_crimeWarningIcon}</a>` : `<span class="OC2-crimeMouseoverWarning" title="${_crimeWarningMouseover}">${_crimeWarningIcon}</span>`}<a href="https://www.torn.com/factions.php?step=your&type=12#/tab=crimes&crimeId=${_crimeArray[i].id}">Lv${_crimeArray[i].difficulty} ${_crimeArray[i].name}</a></div>
         <div class="OC2-tableCell OC2-tableCountdown OC2-crimeID_${_crimeArray[i].id}" title="${_countdownMouseover}"><span class="OC2-countdownText">${_countdownText}</span> <span class="OC2-countdown" data-countdown="${_countdownToTimestamp}">${_countdownToTimestamp}</span></div>
       </li>`)
       _afterElm.after(_outputHTML)
@@ -1966,6 +2403,7 @@ async function ensureCrimesOverview() {
 }
 
 async function hashChangeFunction() {
+  maybeStartArmoryLoanHelper()
   if (checkCrimesPage()) {
     await ensureCrimesOverview()
   } else {
@@ -1999,6 +2437,8 @@ async function runOnceFunction() {
     //don't need to load the rest of the script
     return
   }
+  bindArmoryLoanLinks()
+  maybeStartArmoryLoanHelper()
   //insert member overview
   if (checkCrimesPage() || await checkTravelFactionPage()) {
     await ensureCrimesOverview()
