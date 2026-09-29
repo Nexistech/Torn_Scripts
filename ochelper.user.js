@@ -2,7 +2,7 @@
 // @name        [TORN] OC 2.0 Helper (Modified with Dynamic Limits)
 // @namespace    https://github.com/Nexistech/Torn_Scripts
 // @match       https://www.torn.com/*
-// @version     1.13
+// @version     1.14
 // @author      Coshtor [2943104]
 // @description OC 2.0 overview with per-level success limits, newbie exclusion, and an armory loan helper. Fork of callmericky [3299880] / whatdoesthespacebardo's OC 2.0 Helper.
 // @require     http://code.jquery.com/jquery-3.6.0.min.js
@@ -376,8 +376,21 @@ function getArmorySubTabForItem(itemId) {
 }
 
 function getArmoryLoanUrl(itemId) {
-  const sub = getArmorySubTabForItem(itemId)
+  const sub = getArmorySubTabForItem(itemId) || "utilities"
   return `https://www.torn.com/factions.php?step=your#/tab=armoury&start=0&sub=${encodeURIComponent(sub)}`
+}
+
+function applyArmorySubHash(sub) {
+  const wantedSub = sub || "utilities"
+  const wantedHash = `/tab=armoury&start=0&sub=${wantedSub}`
+  if (String(window.location.hash).replace(/^#/, "") !== wantedHash) {
+    window.location.hash = wantedHash
+  }
+}
+
+function currentArmorySub() {
+  const match = String(window.location.hash || "").match(/sub=([^&]+)/)
+  return match ? decodeURIComponent(match[1]) : ""
 }
 
 function bindArmoryLoanLinks() {
@@ -407,13 +420,12 @@ function bindArmoryLoanLinks() {
       console.log("OC 2.0 Overview Script: unable to store pending armory loan", err)
     }
     const nextUrl = getArmoryLoanUrl(itemId)
-    const nextHash = nextUrl.split("#")[1] || "/tab=armoury&start=0&sub=utilities"
+    const wantedSub = getArmorySubTabForItem(itemId) || "utilities"
     if (window.location.pathname.indexOf("factions.php") >= 0) {
-      if (window.location.hash === "#" + nextHash) {
-        maybeStartArmoryLoanHelper()
-      } else {
-        window.location.hash = nextHash
-      }
+      applyArmorySubHash(wantedSub)
+      setTimeout(() => applyArmorySubHash(wantedSub), 250)
+      setTimeout(() => applyArmorySubHash(wantedSub), 800)
+      setTimeout(() => maybeStartArmoryLoanHelper(), 900)
     } else {
       window.location.href = nextUrl
     }
@@ -737,14 +749,10 @@ function maybeStartArmoryLoanHelper() {
   if (raw) {
     try {
       const pending = JSON.parse(raw)
-      const wantedSub = getArmorySubTabForItem(pending.itemId)
-      if (wantedSub && href.search("sub=" + wantedSub) < 0) {
-        const tab = document.querySelector(`#faction-armoury-tabs a[href*="sub=${wantedSub}"], #faction-armoury-tabs li[aria-controls*="sub=${wantedSub}"]`)
-        if (tab) {
-          tab.click()
-        } else {
-          window.location.hash = `/tab=armoury&start=0&sub=${wantedSub}`
-        }
+      const wantedSub = getArmorySubTabForItem(pending.itemId) || "utilities"
+      if (currentArmorySub() !== wantedSub) {
+        applyArmorySubHash(wantedSub)
+        setTimeout(() => applyArmorySubHash(wantedSub), 400)
       }
     } catch (err) {}
   }
@@ -2481,12 +2489,15 @@ let lastOverviewContext = ""
 async function hashChangeFunction() {
   maybeStartArmoryLoanHelper()
   if (checkCrimesPage()) {
+    const hasViewer = $(".OC2-memberViewer .OC2-memberTable")[0]
     const returningToCrimes = lastOverviewContext !== "crimes"
     lastOverviewContext = "crimes"
-    if (returningToCrimes && $(".OC2-memberViewer .OC2-memberTable")[0]) {
+    if (!hasViewer) {
+      await ensureCrimesOverview()
+    } else if (returningToCrimes) {
       await refreshCrimesOverview()
     } else {
-      await ensureCrimesOverview()
+      $(".OC2-memberViewer").show()
     }
   } else {
     lastOverviewContext = (String(window.location.href).search("tab=armoury") >= 0 || String(window.location.href).search("tab=armory") >= 0) ? "armoury" : "other"
@@ -2556,18 +2567,23 @@ async function runOnceFunction() {
 
 //taken from stackoverflow https://stackoverflow.com/questions/5525071/how-to-wait-until-an-element-exists because mutation observer confuses me
 //needed because the faction page info only loads after the document is ready
-function waitForElm(selector) {
+function waitForElm(selector, timeoutMs = 8000) {
     return new Promise(resolve => {
         if (document.querySelector(selector)) {
             return resolve(document.querySelector(selector));
         }
+        const fallback = () => {
+            observer.disconnect();
+            resolve(document.querySelector(selector) || document.querySelector("#faction-main") || document.querySelector(".content-wrapper") || document.body);
+        }
+        const timer = setTimeout(fallback, timeoutMs)
         const observer = new MutationObserver(mutations => {
             if (document.querySelector(selector)) {
+                clearTimeout(timer);
                 observer.disconnect();
                 resolve(document.querySelector(selector));
             }
         });
-        // If you get "parameter 1 is not of type 'Node'" error, see https://stackoverflow.com/a/77855838/492336
         observer.observe(document.body, {
             childList: true,
             subtree: true
