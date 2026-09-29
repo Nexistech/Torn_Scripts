@@ -2,9 +2,9 @@
 // @name        [TORN] OC 2.0 Helper (Modified with Dynamic Limits)
 // @namespace    https://github.com/Nexistech/Torn_Scripts
 // @match       https://www.torn.com/*
-// @version     1.11
-// @author      callmericky [3299880] / whatdoesthespacebardo - Edited by Coshtor
-// @description  OC 2.0 overview with per-level success limits and a newbie exclusion period. Fork of callmericky's helper.
+// @version     1.13
+// @author      Coshtor [2943104]
+// @description OC 2.0 overview with per-level success limits, newbie exclusion, and an armory loan helper. Fork of callmericky [3299880] / whatdoesthespacebardo's OC 2.0 Helper.
 // @require     http://code.jquery.com/jquery-3.6.0.min.js
 // @connect     tornprobability.com
 // @connect     tornprobability.com:3000
@@ -17,6 +17,11 @@
 // @downloadURL  https://raw.githubusercontent.com/Nexistech/Torn_Scripts/main/ochelper.user.js
 // @updateURL    https://raw.githubusercontent.com/Nexistech/Torn_Scripts/main/ochelper.user.js
 // ==/UserScript==
+
+// Copyright (C) callmericky [3299880] / whatdoesthespacebardo
+// Copyright (C) Coshtor [2943104]
+// This is free software under GNU GPLv3. You may change and share it
+// under that license. This file is a modified fork of the original helper.
 
 //IF DROPDOWN MENU DOESN'T WORK, MANUALLY ADD YOUR API KEY HERE
 var APIKey = "";
@@ -835,7 +840,7 @@ async function getAndAnalyzeAPIData() {
   console.log("OC 2.0 Overview Script: Sending API request to get OC 2.0 crime data")
   return await $.ajax({
     dataType: "json",
-    url: (`https://api.torn.com/v2/faction/basic,crimes,members?cat=available,completed&offset=0&striptags=true&comment=OC2-helper`),
+    url: (`https://api.torn.com/v2/faction/basic,crimes,members?cat=available,completed&offset=0&striptags=true&comment=OC2-helper&timestamp=${Date.now()}`),
     headers: {
       Authorization: (`ApiKey ${APIKey}`)
     }
@@ -1370,8 +1375,10 @@ function calculateSoonAvailMembers() {
 }
 
 function putMemberInfoIntoTable() {
-  //fix for tornPDA, idk why but checking the li.tablecell works but checking the ul.table doesn't
-  if ($(".OC2-memberTable .OC2-tableCell")[0]) {
+  if ($(".OC2-memberTable li.OC2-crimeLi").not("[class*='OC2-titleLi']").not(".OC2-horizLine").length > 0) {
+    return
+  }
+  if ($(".OC2-memberTable li.OC2-memberAvailable").length > 0) {
     return
   }
   availMemberList = []
@@ -1496,6 +1503,9 @@ async function putCrimeInfoIntoTable(_crimeArray, _afterElm) {
   let _crimeListType = ""
   if (_crimeArray.length > 0) {
     for (let i = 0; i < _crimeArray.length; i++) {
+      if ($(`.OC2-memberTable li.OC2-crimeLi.OC2-crimeID_${_crimeArray[i].id}`).length) {
+        continue
+      }
       //crimes in recruiting include both crimes with members (has planning_at) and with no members (don't have planning_at)
       if (_crimeArray[i].status == "Recruiting") {
         //get crimes with no members
@@ -1706,7 +1716,9 @@ async function putCrimeInfoIntoTable(_crimeArray, _afterElm) {
 
 //templating functions
 async function generateInsertHTML() {
-
+  if ($(".OC2-memberViewer").length > 1) {
+    $(".OC2-memberViewer").slice(1).remove()
+  }
   if ($(".OC2-memberViewer .OC2-memberTable")[0]) {
     return
   }
@@ -2375,6 +2387,60 @@ function overviewTableNeedsFill() {
   return dataCrimeRows.length < 1
 }
 
+function resetOverviewRuntimeState() {
+  memberInfo = {}
+  crimeListUninitiated = []
+  crimeListRecruiting = []
+  crimeListPlanning = []
+  crimeIDListUninitiated = []
+  crimeIDListRecruiting = []
+  crimeIDListFull = []
+  availMemberList = []
+  availableCrimeSlots = {}
+  availableCrimeSlotsCount = 0
+  alreadyCountedCrimeSlots = false
+  calculatedSuccessChanceObj = {}
+  soonAvailableMembers = 0
+  soonAvailableMembersList = []
+  availableMembers = 0
+  activeMembers = 0
+}
+
+function clearOverviewDataRows() {
+  $(".OC2-memberTable li.OC2-memberAvailable").remove()
+  $(".OC2-memberTable li.OC2-crimeMemberLi").remove()
+  $(".OC2-memberTable li.OC2-crimeLi").not("[class*='OC2-titleLi']").not(".OC2-horizLine").remove()
+}
+
+let overviewBusy = false
+
+async function refreshCrimesOverview() {
+  if (overviewBusy) {
+    return
+  }
+  overviewBusy = true
+  resetOverviewRuntimeState()
+  clearOverviewDataRows()
+  myAPIData = null
+  try {
+    await generateInsertHTML()
+    try {
+      let _successfulGetAPIData = await getAndAnalyzeAPIData()
+      if (_successfulGetAPIData.error) {
+        $(".OC2-memberTable").hide()
+        $(".OC2-memberTableErrorDisplay").html(`<span style="margin-left: 20px">Error occured: ${_successfulGetAPIData.error.error}. Please visit the <a href="https://www.torn.com/preferences.php#OC2-Settings" target="_new" style="color: inherit; font-weight: bold; text-decoration: underline">Settings Page</a> to set up an API key</span>`)
+        $(".OC2-memberTableErrorDisplay").show()
+        return _successfulGetAPIData
+      }
+    } catch (_err) {
+      return _err
+    }
+    putMemberInfoIntoTable()
+  } finally {
+    overviewBusy = false
+  }
+}
+
 async function populateOverviewFromAPI() {
   if (!myAPIData) {
     try {
@@ -2398,19 +2464,47 @@ async function populateOverviewFromAPI() {
 }
 
 async function ensureCrimesOverview() {
-  await generateInsertHTML()
-  await populateOverviewFromAPI()
+  if (overviewBusy) {
+    return
+  }
+  overviewBusy = true
+  try {
+    await generateInsertHTML()
+    await populateOverviewFromAPI()
+  } finally {
+    overviewBusy = false
+  }
 }
+
+let lastOverviewContext = ""
 
 async function hashChangeFunction() {
   maybeStartArmoryLoanHelper()
   if (checkCrimesPage()) {
-    await ensureCrimesOverview()
+    const returningToCrimes = lastOverviewContext !== "crimes"
+    lastOverviewContext = "crimes"
+    if (returningToCrimes && $(".OC2-memberViewer .OC2-memberTable")[0]) {
+      await refreshCrimesOverview()
+    } else {
+      await ensureCrimesOverview()
+    }
   } else {
+    lastOverviewContext = (String(window.location.href).search("tab=armoury") >= 0 || String(window.location.href).search("tab=armory") >= 0) ? "armoury" : "other"
     if ($(".OC2-memberViewer .OC2-memberTable")[0]) {
       $(".OC2-memberViewer").hide();
     }
   }
+}
+
+let overviewNavTimer = null
+function scheduleOverviewNav() {
+  if (overviewNavTimer) {
+    clearTimeout(overviewNavTimer)
+  }
+  overviewNavTimer = setTimeout(() => {
+    overviewNavTimer = null
+    hashChangeFunction()
+  }, 200)
 }
 
 async function runOnceFunction() {
@@ -2442,6 +2536,9 @@ async function runOnceFunction() {
   //insert member overview
   if (checkCrimesPage() || await checkTravelFactionPage()) {
     await ensureCrimesOverview()
+    if (checkCrimesPage()) {
+      lastOverviewContext = "crimes"
+    }
   }
   //sidebar notifier, but not if the sidebar doesn't exist
   if (userSettings.showSidebarOC == "sidebar-show") {
@@ -2515,12 +2612,11 @@ _isWindowTiny.addEventListener("change", function() {
 
 checkWindowWidth()
 runOnceFunction()
-$(window).on('hashchange', hashChangeFunction)
-$(window).on('popstate', hashChangeFunction)
-$(document).on('click', 'a[href*="tab=crimes"], a[href*="#/tab=crimes"]', function() {
-  setTimeout(hashChangeFunction, 50)
-  setTimeout(hashChangeFunction, 400)
-})
+$(window).off('hashchange.oc2nav popstate.oc2nav')
+$(document).off('click.oc2nav')
+$(window).on('hashchange.oc2nav', scheduleOverviewNav)
+$(window).on('popstate.oc2nav', scheduleOverviewNav)
+$(document).on('click.oc2nav', 'a[href*="tab=crimes"], a[href*="#/tab=crimes"]', scheduleOverviewNav)
 
 $("#dark-mode-state").on('change', modeChangeFunction)
 
