@@ -2,7 +2,7 @@
 // @name        [TORN] OC 2.0 Helper (Modified with Dynamic Limits)
 // @namespace    https://github.com/Nexistech/Torn_Scripts
 // @match       https://www.torn.com/*
-// @version     1.14
+// @version     1.15
 // @author      Coshtor [2943104]
 // @description OC 2.0 overview with per-level success limits, newbie exclusion, and an armory loan helper. Fork of callmericky [3299880] / whatdoesthespacebardo's OC 2.0 Helper.
 // @require     http://code.jquery.com/jquery-3.6.0.min.js
@@ -928,10 +928,21 @@ async function getTornProbabilitySupportedScenarios() {
   });
 }
 
-//calculations and conversions
+function replaceItemPlaceholders(text) {
+  if (!text) {
+    return text
+  }
+  return text.replace(/<#(\d+)>/g, (full, id) => {
+    const item = itemIDObj[id] || itemIDObj[String(id)]
+    if (!item || !item.name) {
+      return full
+    }
+    return `${item.name} <${id}>`
+  })
+}
+
 async function convertItemIDArrayToItems() {
   let _arrayOfIDs = []
-  let _matchregex = /<\#(\d+)>/ig
   for (var _key of Object.keys(itemIDObj)) {
     _arrayOfIDs.push(_key)
   }
@@ -944,26 +955,18 @@ async function convertItemIDArrayToItems() {
       }
     })
   }
-  for (let i = 0; i < $(".OC2-tableCrimeMemberItem:has(*)").length; i++) {
-    let _oldTitle = $(".OC2-tableCrimeMemberItem:has(*)").eq(i).attr("title")
-    let _allMatches = [...($(".OC2-tableCrimeMemberItem:has(*)").eq(i).attr("title")).matchAll(_matchregex)]
-    _allMatches.forEach( _match => {
-      let _newTitle = _oldTitle.replace(_match[0], `${itemIDObj[_match[1]].name} <${_match[1]}>`)
-      $(".OC2-tableCrimeMemberItem:has(*)").eq(i).attr("title", _newTitle)
-    });
-
-  }
-  //this needs more IFs to prevent errors, since the item ID may exist but the span with the warning does not exist
-  for (let i = 0; i < $(".OC2-crimeMouseoverWarning").length; i++) {
-    let _oldTitle = $(".OC2-crimeMouseoverWarning").eq(i).attr("title")
-    if (_oldTitle) {
-      let _regexResult = _matchregex.exec($(".OC2-crimeMouseoverWarning").eq(i).attr("title"))
-      if (_regexResult) {
-        let _newTitle = _oldTitle.replace(_matchregex, `${itemIDObj[_regexResult[1]].name} <$1>`)
-        $(".OC2-crimeMouseoverWarning").eq(i).attr("title", _newTitle)
-      }
+  $(".OC2-tableCrimeMemberItem:has(*)").each(function() {
+    const current = $(this).attr("title")
+    if (current) {
+      $(this).attr("title", replaceItemPlaceholders(current))
     }
-  }
+  })
+  $(".OC2-crimeMouseoverWarning").each(function() {
+    const current = $(this).attr("title")
+    if (current) {
+      $(this).attr("title", replaceItemPlaceholders(current))
+    }
+  })
 }
 
 
