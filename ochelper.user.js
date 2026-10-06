@@ -2,7 +2,7 @@
 // @name        [TORN] OC 2.0 Helper (Modified with Dynamic Limits)
 // @namespace    https://github.com/Nexistech/Torn_Scripts
 // @match       https://www.torn.com/*
-// @version     1.16
+// @version     1.17
 // @author      Coshtor [2943104]
 // @description OC 2.0 overview with per-level success limits, newbie exclusion, and an armory loan helper. Fork of callmericky [3299880] / whatdoesthespacebardo's OC 2.0 Helper.
 // @require     http://code.jquery.com/jquery-3.6.0.min.js
@@ -2499,6 +2499,23 @@ async function ensureCrimesOverview() {
 
 let lastOverviewContext = ""
 
+function attachOverviewToCrimes() {
+  const root = document.querySelector("#faction-crimes")
+  const viewer = document.querySelector(".OC2-memberViewer")
+  if (!root || !viewer) {
+    return false
+  }
+  if (viewer.nextElementSibling !== root) {
+    root.parentNode.insertBefore(viewer, root)
+  }
+  viewer.style.display = ""
+  const table = viewer.querySelector(".OC2-memberTable")
+  if (table) {
+    table.style.display = ""
+  }
+  return true
+}
+
 async function hashChangeFunction() {
   maybeStartArmoryLoanHelper()
   if (checkCrimesPage()) {
@@ -2510,9 +2527,10 @@ async function hashChangeFunction() {
       await ensureCrimesOverview()
     } else if (returningToCrimes) {
       await refreshCrimesOverview()
-    } else {
-      $(".OC2-memberViewer").show()
     }
+    attachOverviewToCrimes()
+    $(".OC2-memberViewer").show()
+    $(".OC2-memberTable").show()
     insertOCNotifier()
   } else {
     lastOverviewContext = (String(window.location.href).search("tab=armoury") >= 0 || String(window.location.href).search("tab=armory") >= 0) ? "armoury" : "other"
@@ -2524,25 +2542,48 @@ async function hashChangeFunction() {
 
 let overviewNavTimer = null
 let overviewNavRetries = []
+let lastSeenFactionUrl = ""
 function scheduleOverviewNav() {
   if (overviewNavTimer) {
     clearTimeout(overviewNavTimer)
   }
   overviewNavRetries.forEach(id => clearTimeout(id))
   overviewNavRetries = []
+  const run = () => {
+    hashChangeFunction()
+  }
   overviewNavTimer = setTimeout(() => {
     overviewNavTimer = null
-    hashChangeFunction()
-  }, 200)
-  // Torn replaces the faction panel after the hash changes. Retry until the crimes root is back.
-  ;[700, 1500, 2500].forEach(delay => {
-    overviewNavRetries.push(setTimeout(() => {
-      if (checkCrimesPage() && !document.querySelector(".OC2-memberViewer")) {
-        hashChangeFunction()
-      }
-      insertOCNotifier()
-    }, delay))
+    run()
+  }, 150)
+  ;[600, 1400, 2500].forEach(delay => {
+    overviewNavRetries.push(setTimeout(run, delay))
   })
+}
+
+function hookFactionNavigation() {
+  if (window.__OC2_historyHooked) {
+    return
+  }
+  window.__OC2_historyHooked = true
+  ;["pushState", "replaceState"].forEach(method => {
+    const original = history[method]
+    history[method] = function() {
+      const result = original.apply(this, arguments)
+      scheduleOverviewNav()
+      return result
+    }
+  })
+  setInterval(() => {
+    if (window.location.pathname.indexOf("factions.php") < 0) {
+      return
+    }
+    const now = window.location.href
+    if (now !== lastSeenFactionUrl) {
+      lastSeenFactionUrl = now
+      scheduleOverviewNav()
+    }
+  }, 500)
 }
 
 async function runOnceFunction() {
@@ -2654,6 +2695,7 @@ _isWindowTiny.addEventListener("change", function() {
 });
 
 checkWindowWidth()
+hookFactionNavigation()
 runOnceFunction()
 $(window).off('hashchange.oc2nav popstate.oc2nav')
 $(document).off('click.oc2nav')
